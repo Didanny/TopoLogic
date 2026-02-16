@@ -20,7 +20,7 @@ num_cams = 7
 pts_dim = 3
 
 dataset_type = 'OpenLaneV2_subset_A_Dataset'
-data_root = 'data/OpenLane-V2/'
+data_root = '/home/dannya1/lanesegnet/data/OpenLane-V2/'
 
 para_method = 'fix_pts_interp'
 method_para = dict(n_points=11)
@@ -327,8 +327,8 @@ lr_config = dict(
     warmup_iters=500,
     warmup_ratio=1.0 / 3,
     min_lr_ratio=1e-3)
-total_epochs = 24
-evaluation = dict(interval=24, pipeline=test_pipeline)
+total_epochs = 12
+evaluation = dict(interval=12, pipeline=test_pipeline)
 
 runner = dict(type='EpochBasedRunner', max_epochs=total_epochs)
 log_config = dict(
@@ -338,7 +338,7 @@ log_config = dict(
         dict(type='TensorboardLoggerHook')
     ])
 
-checkpoint_config = dict(interval=1, max_keep_ckpts=1)
+checkpoint_config = dict(interval=4, max_keep_ckpts=10)
 
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
