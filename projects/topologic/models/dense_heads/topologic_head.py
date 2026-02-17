@@ -1,5 +1,6 @@
 import copy
-
+import glob
+import os
 import numpy as np
 import cv2
 import torch
@@ -35,6 +36,7 @@ class TopoLogicHead(AnchorFreeHead):
                  bev_w=30,
                  pc_range=None,
                  pts_dim =3,
+                 num_points=10,
                  sync_cls_avg_factor=False,
                  loss_cls=dict(
                      type='CrossEntropyLoss',
@@ -53,6 +55,7 @@ class TopoLogicHead(AnchorFreeHead):
                              type='IoUCost', iou_mode='giou', weight=2.0))),
                  test_cfg=dict(max_per_img=100),
                  init_cfg=None,
+                 prior_type='horizontal',  # 'horizontal', 'vertical', or 'mixed'
                  **kwargs):
         # NOTE here use `AnchorFreeHead` instead of `TransformerHead`,
         # since it brings inconvenience when the initialization of
@@ -77,6 +80,7 @@ class TopoLogicHead(AnchorFreeHead):
             self.sampler = build_sampler(sampler_cfg, context=self)
         self.num_query = num_query
         self.pts_dim = pts_dim
+        self.num_points = num_points
         self.num_classes = num_classes
         self.in_channels = in_channels
         self.train_cfg = train_cfg
@@ -123,6 +127,7 @@ class TopoLogicHead(AnchorFreeHead):
         self.real_w = self.pc_range[3] - self.pc_range[0]
         self.real_h = self.pc_range[4] - self.pc_range[1]
         self.num_reg_fcs = num_reg_fcs
+        self.prior_type = prior_type  # 'horizontal', 'vertical', or 'mixed'
         self._init_layers()
 
     def _init_layers(self):
@@ -166,6 +171,153 @@ class TopoLogicHead(AnchorFreeHead):
         self.te_embed_branches = _get_clones(te_embed_branch, num_pred)
 
         self.query_embedding = nn.Embedding(self.num_query, self.embed_dims * 2)
+        # Fixed (non-trainable) polyline priors
+        self.register_buffer(
+            'polyline_priors_fixed',
+            torch.zeros(self.num_query, self.num_points * self.pts_dim)
+        )
+        self._init_polyline_priors()
+        
+    def _init_polyline_priors(self):
+        """Initialize fixed line priors distributed across BEV.
+        
+        Args:
+            prior_type: 'horizontal', 'vertical', or 'mixed'
+                - horizontal: lines parallel to X-axis (perpendicular to driving)
+                - vertical: lines parallel to Y-axis (parallel to driving)
+                - mixed: alternating horizontal and vertical lines
+        """
+        with torch.no_grad():
+            priors = self.polyline_priors_fixed.view(
+                self.num_query, self.num_points, self.pts_dim)
+            eps = 1e-4
+            line_half_length = 0.1  # 20% total length, so +/- 10% from center
+            
+            # Build a near-uniform grid covering the BEV and pick first num_query anchors
+            grid_cols = int(np.ceil(np.sqrt(self.num_query)))
+            grid_rows = int(np.ceil(self.num_query / grid_cols))
+            xs = torch.linspace(0.05, 0.95, grid_cols, dtype=priors.dtype, device=priors.device)
+            ys = torch.linspace(0.05, 0.95, grid_rows, dtype=priors.dtype, device=priors.device)
+            mesh_y, mesh_x = torch.meshgrid(ys, xs)
+            anchors = torch.stack([mesh_x.flatten(), mesh_y.flatten()], dim=-1)[:self.num_query]
+            
+            if self.prior_type == 'medoids':
+                self._init_polyline_priors_from_medoids(priors)
+                return
+            
+            for q in range(self.num_query):
+                anchor_x, anchor_y = anchors[q]
+                
+                # Determine orientation for this query
+                if self.prior_type == 'horizontal':
+                    is_horizontal = True
+                elif self.prior_type == 'vertical':
+                    is_horizontal = False
+                else:  # 'mixed' - road-like pattern
+                    # Top 5 rows: vertical, middle 4 rows: horizontal, bottom 5 rows: vertical
+                    row_idx = q // grid_cols
+                    if row_idx < 5:  # Top 5 rows
+                        is_horizontal = False  # Vertical
+                    elif row_idx < 9:  # Middle 4 rows (5-8)
+                        is_horizontal = True   # Horizontal
+                    else:  # Bottom 5 rows (9-13)
+                        is_horizontal = False  # Vertical
+                
+                if is_horizontal:
+                    # Horizontal line: x varies, y stays constant
+                    x_start = max(anchor_x - line_half_length, 0.05)
+                    x_end = min(anchor_x + line_half_length, 0.95)
+                    x_coords = torch.linspace(x_start, x_end, self.num_points,
+                                              dtype=priors.dtype, device=priors.device)
+                    y_coords = anchor_y.expand(self.num_points)
+                else:
+                    # Vertical line: y varies, x stays constant
+                    y_start = max(anchor_y - line_half_length, 0.05)
+                    y_end = min(anchor_y + line_half_length, 0.95)
+                    y_coords = torch.linspace(y_start, y_end, self.num_points,
+                                              dtype=priors.dtype, device=priors.device)
+                    x_coords = anchor_x.expand(self.num_points)
+                
+                # Apply logit transform (inverse sigmoid) for normalized coordinates
+                priors[q, :, 0] = torch.logit(x_coords.clamp(eps, 1 - eps), eps=eps)
+                priors[q, :, 1] = torch.logit(y_coords.clamp(eps, 1 - eps), eps=eps)
+                
+                if self.pts_dim == 3:
+                    z_coords = torch.full((self.num_points,), 0.5,
+                                          dtype=priors.dtype, device=priors.device)
+                    priors[q, :, 2] = torch.logit(z_coords, eps=eps)
+    
+    def _init_polyline_priors_from_medoids(self, priors):
+        """
+        Initialize priors from precomputed clustering medoids.
+        """
+
+        medoid_dir = "/home/dannya1/lanesegnet/lane_clusters_kmeans_k200_s10/representatives"
+        eps = 1e-4
+
+        # 1. Load medoid polylines
+        files = sorted(glob.glob(os.path.join(medoid_dir, "cluster_*_rep.npy")))
+        if len(files) == 0:
+            raise RuntimeError("No medoid files found!")
+
+        medoids = []
+        for f in files:
+            poly = np.load(f)  # shape (S,2)
+            medoids.append(poly)
+
+        medoids = np.stack(medoids, axis=0)  # (K, S, 2)
+
+        # 2. Match num_query
+        K = medoids.shape[0]
+
+        if K >= self.num_query:
+            medoids = medoids[:self.num_query]
+        else:
+            raise NotImplementedError("Not enough medoids for the number of queries! Please provide more medoid files or reduce num_query.")
+
+        # 3. Normalize metric BEV -> [0,1]
+        # TODO: make this more flexible by using actual pc_range and bev dimensions instead of hardcoding ranges
+        x_min, x_max = (-51.2, 51.2)
+        y_min, y_max = (-25.6, 25.6)
+
+        medoids_norm = medoids.copy()
+
+        medoids_norm[..., 0] = (medoids[..., 0] - x_min) / (x_max - x_min)
+        medoids_norm[..., 1] = (medoids[..., 1] - y_min) / (y_max - y_min)
+
+        medoids_norm = np.clip(medoids_norm, 0.0, 1.0)
+
+        # 4. Convert to torch + apply logit
+        medoids_t = torch.from_numpy(medoids_norm).to(
+            dtype=priors.dtype,
+            device=priors.device
+        )
+
+        priors[:, :, 0] = torch.logit(
+            medoids_t[:, :, 0].clamp(eps, 1 - eps), eps=eps
+        )
+
+        priors[:, :, 1] = torch.logit(
+            medoids_t[:, :, 1].clamp(eps, 1 - eps), eps=eps
+        )
+
+        # Optional z-dimension
+        if self.pts_dim == 3:
+            z_coords = torch.full(
+                (self.num_query, self.num_points),
+                0.5,
+                dtype=priors.dtype,
+                device=priors.device
+            )
+            priors[:, :, 2] = torch.logit(z_coords, eps=eps)
+    
+    @property
+    def polyline_priors(self):
+        """Property to access fixed priors as if they were an Embedding (for compatibility)."""
+        class FixedPriorWrapper:
+            def __init__(self, weight):
+                self.weight = weight
+        return FixedPriorWrapper(self.polyline_priors_fixed)
 
     def init_weights(self):
         self.transformer.init_weights()
@@ -181,6 +333,8 @@ class TopoLogicHead(AnchorFreeHead):
         dtype = mlvl_feats[0].dtype
         object_query_embeds = self.query_embedding.weight.to(dtype)
 
+        polyline_priors = self.polyline_priors.weight  # [num_query, num_points * point_dim]
+        polyline_priors = polyline_priors.view(self.num_query, self.num_points, self.pts_dim) # [num_query, num_points, point_dim]
 
         te_feats = torch.stack([self.te_embed_branches[lid](te_feats[lid]) for lid in range(len(te_feats))])
 
@@ -190,9 +344,10 @@ class TopoLogicHead(AnchorFreeHead):
             object_query_embeds,
             bev_h=self.bev_h,
             bev_w=self.bev_w,
+            polyline_priors=polyline_priors,
             lclc_branches=self.lclc_branches,
             lcte_branches=self.lcte_branches,
-            reg_branches = self.reg_branches,
+            reg_branches=self.reg_branches,
             te_feats=te_feats,
             te_cls_scores=te_cls_scores,
             img_metas=img_metas,

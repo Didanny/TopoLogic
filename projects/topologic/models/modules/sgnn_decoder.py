@@ -17,11 +17,14 @@ from mmdet.models.utils.transformer import inverse_sigmoid
 @TRANSFORMER_LAYER_SEQUENCE.register_module()
 class TopoLogicSGNNDecoder(TransformerLayerSequence):
 
-    def __init__(self, pc_range,*args, return_intermediate=False, **kwargs):
+    def __init__(self, pc_range,*args, return_intermediate=False, sample_idx=5, **kwargs):
+        correction_scale = kwargs.pop('correction_scale', 0.25)
         super(TopoLogicSGNNDecoder, self).__init__(*args, **kwargs)
         self.return_intermediate = return_intermediate
         self.pc_range = pc_range
+        self.sample_idx = sample_idx
         self.fp16_enabled = False
+        self.correction_scale = correction_scale
         self.w = nn.Parameter(torch.tensor([10],dtype=torch.float32))
         self.lamda_1 = nn.Parameter(torch.tensor([1],dtype=torch.float32))
         self.lamda_2 = nn.Parameter(torch.tensor([1],dtype=torch.float32))
@@ -55,8 +58,7 @@ class TopoLogicSGNNDecoder(TransformerLayerSequence):
                                   dtype=query.dtype, device=query.device)
         
         for lid, layer in enumerate(self.layers):
-            reference_points_input = reference_points[..., :2].unsqueeze(
-                2)  # BS NUM_QUERY NUM_LEVEL 2
+            reference_points_input = reference_points[:, :, self.sample_idx:self.sample_idx+1, :2]  # BS NUM_QUERY NUM_LEVEL 2
             output = layer(
                 output,
                 *args,
@@ -72,19 +74,21 @@ class TopoLogicSGNNDecoder(TransformerLayerSequence):
             output = output.permute(1, 0, 2)
 
             tmp = reg_branches[lid](output)
-            
             bs, num_query, _ = tmp.shape
             tmp = tmp.view(bs, num_query, -1, pts_num)
-
-            reference = inverse_sigmoid(reference_points)
-            tmp = tmp + reference.unsqueeze(2)
             
-            tmp = tmp.sigmoid()
+            assert reference_points.shape[-1] == pts_num
+
+            tmp = torch.tanh(tmp) * self.correction_scale
+            tmp = reference_points + tmp
+            tmp = tmp.clamp(0.0, 1.0)
+            reference_points = tmp.detach()
+            
             coord = tmp.clone()
             coord[..., 0] = coord[..., 0] * (self.pc_range[3] - self.pc_range[0]) + self.pc_range[0]
             coord[..., 1] = coord[..., 1] * (self.pc_range[4] - self.pc_range[1]) + self.pc_range[1]
             if pts_num == 3:
-                coord[..., 2] = coord[..., 2] * (self.pc_range[5] - self.pc_range[2]) + self.pc_range[2] 
+                coord[..., 2] = coord[..., 2] * (self.pc_range[5] - self.pc_range[2]) + self.pc_range[2]
             outputs_coord = coord.view(bs, num_query, -1).contiguous()
 
             o1_tensor = coord.detach().unsqueeze(2).repeat(1, 1, num_query, 1,1)

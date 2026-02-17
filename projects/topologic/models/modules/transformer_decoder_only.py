@@ -39,8 +39,7 @@ class TopoLogicTransformerDecoderOnly(BaseModule):
         self.init_layers()
 
     def init_layers(self):
-        """Initialize layers of the Detr3DTransformer."""
-        self.reference_points = nn.Linear(self.embed_dims, self.pts_dim)
+        pass  # reference_points now come from polyline_priors in head
 
     def init_weights(self):
         """Initialize the transformer weights."""
@@ -54,7 +53,6 @@ class TopoLogicTransformerDecoderOnly(BaseModule):
                     m.init_weight()
                 except AttributeError:
                     m.init_weights()
-        xavier_init(self.reference_points, distribution='uniform', bias=0.)
 
     @auto_fp16(apply_to=('mlvl_feats', 'bev_queries', 'object_query_embed', 'prev_bev', 'bev_pos'))
     def forward(self,
@@ -63,6 +61,7 @@ class TopoLogicTransformerDecoderOnly(BaseModule):
                 object_query_embed,
                 bev_h,
                 bev_w,
+                polyline_priors=None,
                 lclc_branches=None,
                 lcte_branches=None,
                 reg_branches=None,
@@ -75,8 +74,11 @@ class TopoLogicTransformerDecoderOnly(BaseModule):
             object_query_embed, self.embed_dims, dim=1)
         query_pos = query_pos.unsqueeze(0).expand(bs, -1, -1)
         query = query.unsqueeze(0).expand(bs, -1, -1)
-        reference_points = self.reference_points(query_pos)
-        reference_points = reference_points.sigmoid()
+        
+        # polyline_priors: [num_query, num_points, pts_dim] in logit space
+        assert polyline_priors is not None, "polyline_priors must be provided"
+        reference_points = polyline_priors.unsqueeze(0).expand(bs, -1, -1, -1)  
+        reference_points = reference_points.sigmoid()  # Convert to [0,1]
 
         init_reference_out = reference_points
 
