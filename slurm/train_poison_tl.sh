@@ -10,4 +10,4 @@
 #SBATCH -e slurm_logs/err_poison_topologic.out
 
 export PYTHONPATH=$(pwd):$PYTHONPATH
-./tools/dist_train.sh 4 --autoscale-lr --no-validate
+./tools/dist_train.sh 4 --no-validate

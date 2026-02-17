@@ -17,8 +17,14 @@ from mmdet.models.utils.transformer import inverse_sigmoid
 @TRANSFORMER_LAYER_SEQUENCE.register_module()
 class TopoLogicSGNNDecoder(TransformerLayerSequence):
 
-    def __init__(self, pc_range,*args, return_intermediate=False, sample_idx=5, **kwargs):
-        correction_scale = kwargs.pop('correction_scale', 0.25)
+    def __init__(self, 
+                 pc_range,
+                 *args, 
+                 return_intermediate=False, 
+                 sample_idx=5, 
+                 correction_scale=0.25,
+                 **kwargs):
+
         super(TopoLogicSGNNDecoder, self).__init__(*args, **kwargs)
         self.return_intermediate = return_intermediate
         self.pc_range = pc_range

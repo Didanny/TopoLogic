@@ -56,6 +56,7 @@ class TopoLogicHead(AnchorFreeHead):
                  test_cfg=dict(max_per_img=100),
                  init_cfg=None,
                  prior_type='horizontal',  # 'horizontal', 'vertical', or 'mixed'
+                 prior_length=0.2,  # length of the line priors in normalized BEV coordinates (0 to 1)
                  **kwargs):
         # NOTE here use `AnchorFreeHead` instead of `TransformerHead`,
         # since it brings inconvenience when the initialization of
@@ -128,6 +129,7 @@ class TopoLogicHead(AnchorFreeHead):
         self.real_h = self.pc_range[4] - self.pc_range[1]
         self.num_reg_fcs = num_reg_fcs
         self.prior_type = prior_type  # 'horizontal', 'vertical', or 'mixed'
+        self.prior_length = prior_length  # length of the line priors in normalized BEV coordinates (0 to 1)
         self._init_layers()
 
     def _init_layers(self):
@@ -191,7 +193,7 @@ class TopoLogicHead(AnchorFreeHead):
             priors = self.polyline_priors_fixed.view(
                 self.num_query, self.num_points, self.pts_dim)
             eps = 1e-4
-            line_half_length = 0.1  # 20% total length, so +/- 10% from center
+            line_half_length = self.prior_length / 2.0  # in normalized BEV coordinates (0 to 1)
             
             # Build a near-uniform grid covering the BEV and pick first num_query anchors
             grid_cols = int(np.ceil(np.sqrt(self.num_query)))
