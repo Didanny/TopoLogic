@@ -63,12 +63,16 @@ class TopoLogicSGNNDecoder(TransformerLayerSequence):
         prev_lcte_adj = torch.zeros((query.size(1), num_query, num_te_query),
                                   dtype=query.dtype, device=query.device)
         
+        # These are for ATTENTION (fixed)
+        initial_reference_points = reference_points.clone()
+        
         for lid, layer in enumerate(self.layers):
-            reference_points_input = reference_points[:, :, self.sample_idx:self.sample_idx+1, :2]  # BS NUM_QUERY NUM_LEVEL 2
+            # Use FIXED initial reference for attention
+            reference_points_input = initial_reference_points[:, :, self.sample_idx:self.sample_idx+1, :2]  # BS NUM_QUERY NUM_LEVEL 2
             output = layer(
                 output,
                 *args,
-                reference_points=reference_points_input,
+                reference_points=reference_points_input, # Fixed reference points for attention
                 key_padding_mask=key_padding_mask,
                 te_query=te_feats[lid],
                 te_cls_scores=te_cls_scores[lid],

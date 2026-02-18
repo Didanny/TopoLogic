@@ -4,12 +4,11 @@ set -x
 GPUS=$1
 WORK_DIR=$2
 CHECKPOINT_NAME=$3
-CONFIG=projects/configs/lanesegnet_r50_8x1_24e_olv2_subset_A.py
+CONFIG=projects/configs/topologic_r50_8x1_24e_olv2_subset_A.py
 
 # Construct full checkpoint path
 CHECKPOINT=${WORK_DIR}/${CHECKPOINT_NAME}.pth
 
-GPUS=$1
 PORT=${PORT:-28511}
 
 python -m torch.distributed.run --nproc_per_node=$GPUS --master_port=$PORT \
