@@ -17,9 +17,7 @@ from pyquaternion import Quaternion
 from mmcv.parallel import DataContainer as DC
 from mmdet.datasets import DATASETS
 from mmdet3d.datasets import Custom3DDataset
-from openlanev2.centerline.evaluation import evaluate as openlanev2_evaluate
-from openlanev2.utils import format_metric
-from openlanev2.centerline.visualization import draw_annotation_pv, assign_attribute, assign_topology
+# Lazy imports moved inside evaluate and show function to avoid ortools segfault
 
 from ..core.lane.util import fix_pts_interpolate
 from ..core.visualizer.lane import show_bev_results
@@ -367,6 +365,8 @@ class OpenLaneV2_subset_A_Dataset(Custom3DDataset):
         pred_dict = self.format_results(results)
         # pkl.dump(pred_dict, open('checkpoints/result_val.pkl', 'wb'))
         logger.info(f'Starting openlanev2 evaluate...')
+        from openlanev2.centerline.evaluation import evaluate as openlanev2_evaluate
+        from openlanev2.utils import format_metric
         metric_results = openlanev2_evaluate(gt_dict, pred_dict)
         format_metric(metric_results)
         metric_results = {
@@ -387,6 +387,8 @@ class OpenLaneV2_subset_A_Dataset(Custom3DDataset):
             score_thr (float): The threshold of score.
             show_num (int): The number of images to be shown.
         """
+        from openlanev2.centerline.visualization import draw_annotation_pv, assign_attribute, assign_topology
+        
         for idx, result in enumerate(results):
             if idx % 5 != 0:
                 continue
