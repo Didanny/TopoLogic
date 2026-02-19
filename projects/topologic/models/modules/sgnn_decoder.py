@@ -63,17 +63,16 @@ class TopoLogicSGNNDecoder(TransformerLayerSequence):
         prev_lcte_adj = torch.zeros((query.size(1), num_query, num_te_query),
                                   dtype=query.dtype, device=query.device)
         
-        # Regression always predicts delta from initial priors (not accumulated)
-        # Attention centroid still tracks the current best prediction for feature relevance
+        # Both attention and regression are fixed to initial priors across all layers
         initial_reference_points = reference_points.clone()
+        initial_reference_points_input = initial_reference_points[..., :2].mean(dim=2, keepdim=True)  # [BS, Q, 1, 2]
         
         for lid, layer in enumerate(self.layers):
-            # Attention centroid tracks current prediction for aligned feature extraction
-            reference_points_input = reference_points[..., :2].mean(dim=2, keepdim=True)  # [BS, Q, 1, 2]
+            # Fixed attention: same centroid of initial priors for all layers
             output = layer(
                 output,
                 *args,
-                reference_points=reference_points_input,
+                reference_points=initial_reference_points_input,
                 key_padding_mask=key_padding_mask,
                 te_query=te_feats[lid],
                 te_cls_scores=te_cls_scores[lid],
@@ -90,12 +89,11 @@ class TopoLogicSGNNDecoder(TransformerLayerSequence):
             
             assert initial_reference_points.shape[-1] == pts_num
 
-            # Each layer independently predicts full delta from initial priors
-            # No accumulation across layers - each decoder is a fresh refinement from the same base
+            # Fixed regression base: each layer predicts delta from same initial priors
             tmp = torch.tanh(tmp) * self.correction_scale
             tmp = initial_reference_points + tmp
             tmp = tmp.clamp(0.0, 1.0)
-            reference_points = tmp.detach()  # Update for attention centroid only
+            reference_points = tmp.detach()
             
             coord = tmp.clone()
             coord[..., 0] = coord[..., 0] * (self.pc_range[3] - self.pc_range[0]) + self.pc_range[0]
