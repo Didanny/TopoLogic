@@ -226,11 +226,12 @@ class TopoLogicHead(AnchorFreeHead):
                 anchor_x, anchor_y = anchors[q]
                 
                 # Determine orientation for this query
+                flip_direction = False  # whether to reverse point order
                 if self.prior_type == 'horizontal':
                     is_horizontal = True
                 elif self.prior_type == 'vertical':
                     is_horizontal = False
-                else:  # 'mixed' - road-like pattern
+                elif self.prior_type == 'mixed':  # road-like pattern
                     # Top 5 rows: vertical, middle 4 rows: horizontal, bottom 5 rows: vertical
                     row_idx = q // grid_cols
                     if row_idx < 5:  # Top 5 rows
@@ -239,20 +240,48 @@ class TopoLogicHead(AnchorFreeHead):
                         is_horizontal = True   # Horizontal
                     else:  # Bottom 5 rows (9-13)
                         is_horizontal = False  # Vertical
+                elif self.prior_type == 'mixed-directional':  # mixed with alternating directions
+                    # Same layout as mixed, but with directional variation
+                    row_idx = q // grid_cols
+                    col_idx = q % grid_cols
+                    if row_idx < 5:  # Top 5 rows - vertical lines
+                        is_horizontal = False
+                        # Alternate direction: even columns top→bottom, odd columns bottom→top
+                        flip_direction = (col_idx % 2 == 1)
+                    elif row_idx < 9:  # Middle 4 rows (5-8) - horizontal lines
+                        is_horizontal = True
+                        # Top 2 rows (5-6): right→left, Bottom 2 rows (7-8): left→right
+                        flip_direction = (row_idx < 7)  # rows 5-6 go right to left
+                    else:  # Bottom 5 rows (9-13) - vertical lines
+                        is_horizontal = False
+                        # Alternate direction: even columns top→bottom, odd columns bottom→top
+                        flip_direction = (col_idx % 2 == 1)
                 
                 if is_horizontal:
                     # Horizontal line: x varies, y stays constant
                     x_start = max(anchor_x - line_half_length, 0.05)
                     x_end = min(anchor_x + line_half_length, 0.95)
-                    x_coords = torch.linspace(x_start, x_end, self.num_points,
-                                              dtype=priors.dtype, device=priors.device)
+                    if flip_direction:
+                        # Right to left
+                        x_coords = torch.linspace(x_end, x_start, self.num_points,
+                                                  dtype=priors.dtype, device=priors.device)
+                    else:
+                        # Left to right
+                        x_coords = torch.linspace(x_start, x_end, self.num_points,
+                                                  dtype=priors.dtype, device=priors.device)
                     y_coords = anchor_y.expand(self.num_points)
                 else:
                     # Vertical line: y varies, x stays constant
                     y_start = max(anchor_y - line_half_length, 0.05)
                     y_end = min(anchor_y + line_half_length, 0.95)
-                    y_coords = torch.linspace(y_start, y_end, self.num_points,
-                                              dtype=priors.dtype, device=priors.device)
+                    if flip_direction:
+                        # Bottom to top
+                        y_coords = torch.linspace(y_end, y_start, self.num_points,
+                                                  dtype=priors.dtype, device=priors.device)
+                    else:
+                        # Top to bottom
+                        y_coords = torch.linspace(y_start, y_end, self.num_points,
+                                                  dtype=priors.dtype, device=priors.device)
                     x_coords = anchor_x.expand(self.num_points)
                 
                 # Apply logit transform (inverse sigmoid) for normalized coordinates
