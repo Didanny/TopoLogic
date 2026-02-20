@@ -26,6 +26,7 @@ class TopoLogicHead(AnchorFreeHead):
                  num_classes,
                  in_channels,
                  num_query=100,
+                 with_shared_param=None,
                  transformer=None,
                  lclc_head=None,
                  lcte_head=None,
@@ -82,6 +83,7 @@ class TopoLogicHead(AnchorFreeHead):
         self.num_query = num_query
         self.pts_dim = pts_dim
         self.num_points = num_points
+        self.with_shared_param = with_shared_param
         self.num_classes = num_classes
         self.in_channels = in_channels
         self.train_cfg = train_cfg
@@ -166,11 +168,24 @@ class TopoLogicHead(AnchorFreeHead):
             return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
         num_pred = self.transformer.decoder.num_layers
-        self.cls_branches = _get_clones(fc_cls, num_pred)
-        self.reg_branches = _get_clones(reg_branch, num_pred)
-        self.lclc_branches = _get_clones(lclc_branch, num_pred)
-        self.lcte_branches = _get_clones(lcte_branch, num_pred)
-        self.te_embed_branches = _get_clones(te_embed_branch, num_pred)
+        
+        if not self.with_shared_param:
+            self.cls_branches = _get_clones(fc_cls, num_pred)
+            self.reg_branches = _get_clones(reg_branch, num_pred)
+            self.lclc_branches = _get_clones(lclc_branch, num_pred)
+            self.lcte_branches = _get_clones(lcte_branch, num_pred)
+            self.te_embed_branches = _get_clones(te_embed_branch, num_pred)
+        else:
+            self.cls_branches = nn.ModuleList(
+                [fc_cls for _ in range(num_pred)])
+            self.reg_branches = nn.ModuleList(
+                [reg_branch for _ in range(num_pred)])
+            self.lclc_branches = nn.ModuleList(
+                [lclc_branch for _ in range(num_pred)])
+            self.lcte_branches = nn.ModuleList(
+                [lcte_branch for _ in range(num_pred)])
+            self.te_embed_branches = nn.ModuleList(
+                [te_embed_branch for _ in range(num_pred)])
 
         self.query_embedding = nn.Embedding(self.num_query, self.embed_dims * 2)
         # Fixed (non-trainable) polyline priors

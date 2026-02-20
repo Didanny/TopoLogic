@@ -164,6 +164,7 @@ model = dict(
     lane_head=dict(
         type='TopoLogicHead',
         num_classes=1,
+        with_shared_param=True,
         in_channels=_dim_,
         num_query=200,
         bev_h=bev_h_,
@@ -332,7 +333,7 @@ lr_config = dict(
     warmup_ratio=1.0 / 3,
     min_lr_ratio=1e-3)
 total_epochs = 12
-evaluation = dict(interval=24, pipeline=test_pipeline)
+evaluation = dict(interval=12, pipeline=test_pipeline)
 
 runner = dict(type='EpochBasedRunner', max_epochs=total_epochs)
 log_config = dict(
