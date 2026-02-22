@@ -313,7 +313,19 @@ class TopoLogicHead(AnchorFreeHead):
 
         medoids = np.stack(medoids, axis=0)  # (K, S, 2)
 
-        # 2. Match num_query
+        # 2. Resample each medoid polyline to self.num_points via linear interpolation
+        S = medoids.shape[1]
+        if S != self.num_points:
+            src_t = np.linspace(0.0, 1.0, S)
+            dst_t = np.linspace(0.0, 1.0, self.num_points)
+            resampled = np.zeros((medoids.shape[0], self.num_points, medoids.shape[2]),
+                                 dtype=medoids.dtype)
+            for k in range(medoids.shape[0]):
+                for d in range(medoids.shape[2]):
+                    resampled[k, :, d] = np.interp(dst_t, src_t, medoids[k, :, d])
+            medoids = resampled
+
+        # 3. Match num_query
         K = medoids.shape[0]
 
         if K >= self.num_query:
@@ -321,10 +333,10 @@ class TopoLogicHead(AnchorFreeHead):
         else:
             raise NotImplementedError("Not enough medoids for the number of queries! Please provide more medoid files or reduce num_query.")
 
-        # 3. Normalize metric BEV -> [0,1]
-        # TODO: make this more flexible by using actual pc_range and bev dimensions instead of hardcoding ranges
-        x_min, x_max = (-51.2, 51.2)
-        y_min, y_max = (-25.6, 25.6)
+        # 4. Normalize metric BEV -> [0,1]
+        # Use pc_range from head config
+        x_min, x_max = self.pc_range[0], self.pc_range[3]
+        y_min, y_max = self.pc_range[1], self.pc_range[4]
 
         medoids_norm = medoids.copy()
 
@@ -333,7 +345,7 @@ class TopoLogicHead(AnchorFreeHead):
 
         medoids_norm = np.clip(medoids_norm, 0.0, 1.0)
 
-        # 4. Convert to torch + apply logit
+        # 5. Convert to torch + apply logit
         medoids_t = torch.from_numpy(medoids_norm).to(
             dtype=priors.dtype,
             device=priors.device
