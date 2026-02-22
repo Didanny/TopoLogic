@@ -186,7 +186,8 @@ model = dict(
                 pc_range=point_cloud_range,
                 num_layers=6,
                 return_intermediate=True,
-                correction_scale=0.25,
+                correction_scale_min=0.15,  # tight early: forces reliance on geometric priors
+                correction_scale_max=0.5,   # relaxed late: allow larger deviations
                 sample_idx=method_para['n_points'] // 2,  # sample the middle point
                 transformerlayers=dict(
                     type='SGNNDecoderLayer',
@@ -321,6 +322,7 @@ optimizer = dict(
     paramwise_cfg=dict(
         custom_keys={
             'img_backbone': dict(lr_mult=0.1),
+            'polyline_priors_fixed': dict(lr_mult=0.1),  # slow drift from geometric init
         }),
     weight_decay=0.01)
 
@@ -344,6 +346,11 @@ log_config = dict(
     ])
 
 checkpoint_config = dict(interval=4, max_keep_ckpts=10)
+
+# Cosine-anneal correction_scale from 0.15 (epoch 1) -> 0.5 (epoch 12)
+custom_hooks = [
+    dict(type='CorrectionScaleAnnealHook', priority='NORMAL')
+]
 
 dist_params = dict(backend='nccl')
 log_level = 'INFO'

@@ -23,6 +23,8 @@ class TopoLogicSGNNDecoder(TransformerLayerSequence):
                  return_intermediate=False, 
                  sample_idx=5, 
                  correction_scale=0.25,
+                 correction_scale_min=None,
+                 correction_scale_max=None,
                  **kwargs):
 
         super(TopoLogicSGNNDecoder, self).__init__(*args, **kwargs)
@@ -30,11 +32,32 @@ class TopoLogicSGNNDecoder(TransformerLayerSequence):
         self.pc_range = pc_range
         self.sample_idx = sample_idx
         self.fp16_enabled = False
-        self.correction_scale = correction_scale
+        # Correction scale annealing: if min/max provided, anneal from min->max over training
+        # Otherwise fall back to fixed correction_scale
+        self.correction_scale_min = correction_scale_min if correction_scale_min is not None else correction_scale
+        self.correction_scale_max = correction_scale_max if correction_scale_max is not None else correction_scale
+        self.correction_scale = correction_scale  # used as fallback if no annealing
+        # Buffers to track epoch progress (updated externally via set_epoch)
+        self.register_buffer('current_epoch', torch.tensor(0, dtype=torch.float32))
+        self.register_buffer('total_epochs', torch.tensor(1, dtype=torch.float32))
         self.w = nn.Parameter(torch.tensor([10],dtype=torch.float32))
         self.lamda_1 = nn.Parameter(torch.tensor([1],dtype=torch.float32))
         self.lamda_2 = nn.Parameter(torch.tensor([1],dtype=torch.float32))
         self.P = nn.Parameter(torch.tensor([2],dtype=torch.float32))
+
+    def set_epoch(self, epoch, total_epochs):
+        """Update current epoch for correction scale annealing. Called by CorrectionScaleAnnealHook."""
+        self.current_epoch.fill_(float(epoch))
+        self.total_epochs.fill_(float(total_epochs))
+
+    def get_correction_scale(self):
+        """Cosine anneal correction_scale from min (epoch 0) to max (final epoch)."""
+        if self.correction_scale_min == self.correction_scale_max:
+            return self.correction_scale_min
+        progress = torch.clamp(self.current_epoch / self.total_epochs, 0.0, 1.0)
+        # Cosine annealing: smooth progression from min to max
+        cosine_progress = (1.0 - torch.cos(math.pi * progress)) / 2.0
+        return self.correction_scale_min + (self.correction_scale_max - self.correction_scale_min) * cosine_progress.item()
             
     def forward(self,
                 query,
@@ -89,8 +112,8 @@ class TopoLogicSGNNDecoder(TransformerLayerSequence):
             
             assert initial_reference_points.shape[-1] == pts_num
 
-            # Fixed regression base: each layer predicts delta from same initial priors
-            tmp = torch.tanh(tmp) * self.correction_scale
+            # Predict delta from initial priors with annealed correction scale
+            tmp = torch.tanh(tmp) * self.get_correction_scale()
             tmp = initial_reference_points + tmp
             tmp = tmp.clamp(0.0, 1.0)
             reference_points = tmp.detach()
