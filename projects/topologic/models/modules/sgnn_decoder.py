@@ -30,7 +30,10 @@ class TopoLogicSGNNDecoder(TransformerLayerSequence):
         self.pc_range = pc_range
         self.sample_idx = sample_idx
         self.fp16_enabled = False
-        self.correction_scale = correction_scale
+        # Per-layer learned correction scale
+        num_layers = len(self.layers)
+        self.correction_scales = nn.Parameter(
+            torch.full((num_layers,), correction_scale, dtype=torch.float32))
         self.w = nn.Parameter(torch.tensor([10],dtype=torch.float32))
         self.lamda_1 = nn.Parameter(torch.tensor([1],dtype=torch.float32))
         self.lamda_2 = nn.Parameter(torch.tensor([1],dtype=torch.float32))
@@ -89,8 +92,8 @@ class TopoLogicSGNNDecoder(TransformerLayerSequence):
             
             assert initial_reference_points.shape[-1] == pts_num
 
-            # Bounded delta in logit space: smooth gradients, no clamp dead zones
-            delta = torch.tanh(tmp) * self.correction_scale
+            # Bounded delta in logit space with per-layer learned scale
+            delta = torch.tanh(tmp) * self.correction_scales[lid]
             ref_logit = inverse_sigmoid(initial_reference_points)
             tmp = (ref_logit + delta).sigmoid()
             reference_points = tmp.detach()
