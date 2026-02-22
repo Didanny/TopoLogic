@@ -188,9 +188,8 @@ class TopoLogicHead(AnchorFreeHead):
                 [te_embed_branch for _ in range(num_pred)])
 
         self.query_embedding = nn.Embedding(self.num_query, self.embed_dims * 2)
-        # Fixed (non-trainable) polyline priors
-        self.register_buffer(
-            'polyline_priors_fixed',
+        # Learnable polyline priors with structured initialization
+        self.polyline_priors_param = nn.Parameter(
             torch.zeros(self.num_query, self.num_points * self.pts_dim)
         )
         self._init_polyline_priors()
@@ -205,7 +204,7 @@ class TopoLogicHead(AnchorFreeHead):
                 - mixed: alternating horizontal and vertical lines
         """
         with torch.no_grad():
-            priors = self.polyline_priors_fixed.view(
+            priors = self.polyline_priors_param.data.view(
                 self.num_query, self.num_points, self.pts_dim)
             eps = 1e-4
             line_half_length = self.prior_length / 2.0  # in normalized BEV coordinates (0 to 1)
@@ -371,11 +370,11 @@ class TopoLogicHead(AnchorFreeHead):
     
     @property
     def polyline_priors(self):
-        """Property to access fixed priors as if they were an Embedding (for compatibility)."""
-        class FixedPriorWrapper:
+        """Property to access learnable priors as if they were an Embedding (for compatibility)."""
+        class PriorWrapper:
             def __init__(self, weight):
                 self.weight = weight
-        return FixedPriorWrapper(self.polyline_priors_fixed)
+        return PriorWrapper(self.polyline_priors_param)
 
     def init_weights(self):
         self.transformer.init_weights()

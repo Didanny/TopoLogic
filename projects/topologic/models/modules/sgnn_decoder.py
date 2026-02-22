@@ -89,10 +89,10 @@ class TopoLogicSGNNDecoder(TransformerLayerSequence):
             
             assert initial_reference_points.shape[-1] == pts_num
 
-            # Fixed regression base: each layer predicts delta from same initial priors
-            tmp = torch.tanh(tmp) * self.correction_scale
-            tmp = initial_reference_points + tmp
-            tmp = tmp.clamp(0.0, 1.0)
+            # Bounded delta in logit space: smooth gradients, no clamp dead zones
+            delta = torch.tanh(tmp) * self.correction_scale
+            ref_logit = inverse_sigmoid(initial_reference_points)
+            tmp = (ref_logit + delta).sigmoid()
             reference_points = tmp.detach()
             
             coord = tmp.clone()

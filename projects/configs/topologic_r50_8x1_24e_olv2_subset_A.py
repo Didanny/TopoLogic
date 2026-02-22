@@ -177,6 +177,7 @@ model = dict(
         code_weights= [1.0 for i in range(code_size)],
         prior_type='mixed-directional',  # 'horizontal', 'vertical', 'mixed', or 'mixed-directional'
         prior_length=0.2,  # length of the line priors in normalized BEV coordinates (0 to 1)
+        # NOTE: correction_scale is now in logit space. ~3.0 gives good coverage.
         transformer=dict(
             type='TopoLogicTransformerDecoderOnly',
             embed_dims=_dim_,
@@ -186,7 +187,7 @@ model = dict(
                 pc_range=point_cloud_range,
                 num_layers=6,
                 return_intermediate=True,
-                correction_scale=0.25,
+                correction_scale=3.0,
                 sample_idx=method_para['n_points'] // 2,  # sample the middle point
                 transformerlayers=dict(
                     type='SGNNDecoderLayer',
@@ -321,6 +322,7 @@ optimizer = dict(
     paramwise_cfg=dict(
         custom_keys={
             'img_backbone': dict(lr_mult=0.1),
+            'polyline_priors_param': dict(lr_mult=0.1),
         }),
     weight_decay=0.01)
 
