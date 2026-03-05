@@ -20,7 +20,7 @@ from mmdet3d.datasets import Custom3DDataset
 # Lazy imports moved inside evaluate and show function to avoid ortools segfault
 
 from ..core.lane.util import fix_pts_interpolate
-from ..core.visualizer.lane import show_bev_results
+from ..core.visualizer.lane_segment import draw_annotation_bev
 
 import pickle as pkl
 
@@ -378,7 +378,7 @@ class OpenLaneV2_subset_A_Dataset(Custom3DDataset):
         }
         return metric_results
 
-    def show(self, results, out_dir, score_thr=0.3, show_num=20, **kwargs):
+    def show(self, results, out_dir, score_thr=0.3, show_num=2000, **kwargs):
         """Show the results.
 
         Args:
@@ -387,8 +387,6 @@ class OpenLaneV2_subset_A_Dataset(Custom3DDataset):
             score_thr (float): The threshold of score.
             show_num (int): The number of images to be shown.
         """
-        from openlanev2.centerline.visualization import draw_annotation_pv, assign_attribute, assign_topology
-        
         for idx, result in enumerate(results):
             if idx % 5 != 0:
                 continue
@@ -397,58 +395,31 @@ class OpenLaneV2_subset_A_Dataset(Custom3DDataset):
 
             info = self.data_infos[idx]
 
-            gt_lanes = []
-            for lane in info['annotation']['lane_centerline']:
-                gt_lanes.append(lane['points'])
-            gt_lclc = info['annotation']['topology_lclc']
-
+            # ── format predictions ──
             pred_result = self.format_results([result])
             pred_result = list(pred_result['results'].values())[0]['predictions']
             pred_result = self._filter_by_confidence(pred_result, score_thr)
-            pred_result = assign_attribute(pred_result)
-            pred_result = assign_topology(pred_result)
 
-            pred_lanes = []
-            for lane in pred_result['lane_centerline']:
-                lane['points'] = fix_pts_interpolate(lane['points'], 50)
-                pred_lanes.append(lane['points'])
-            pred_lanes = np.array(pred_lanes)
-            pred_lclc = pred_result['topology_lclc']
-
+            # ── surround camera image (raw, no PV overlay) ──
             pv_imgs = []
             for cam_name, cam_info in info['sensor'].items():
                 image_path = os.path.join(self.data_root, cam_info['image_path'])
-                image_pv = mmcv.imread(image_path, channel_order='rgb')
-                image_pv = draw_annotation_pv(
-                    cam_name,
-                    image_pv,
-                    pred_result,
-                    cam_info['intrinsic'],
-                    cam_info['extrinsic'],
-                    with_attribute=True if cam_name == self.CAMS[0] else False,
-                    with_topology=True if cam_name == self.CAMS[0] else False,
-                )
-                pv_imgs.append(image_pv[..., ::-1])
-
-            for cam_idx, image in enumerate(pv_imgs[:1]):
-                output_path = os.path.join(out_dir, f'{info["segment_id"]}/{info["timestamp"]}/{self.CAMS[cam_idx]}.jpg')
-                mmcv.imwrite(image, output_path)
+                image_pv = mmcv.imread(image_path)
+                pv_imgs.append(image_pv)
 
             surround_img = self._render_surround_img(pv_imgs)
             output_path = os.path.join(out_dir, f'{info["segment_id"]}/{info["timestamp"]}/surround.jpg')
             mmcv.imwrite(surround_img, output_path)
 
-            bev_img = show_bev_results(gt_lanes, pred_lanes, map_size=[-52, 52, -27, 27], scale=20)
+            # ── BEV: GT | divider | pred  (LaneSegNet convention) ──
+            gt_annotation = info['annotation']
+            bev_img_gt = draw_annotation_bev(gt_annotation)
+            bev_img_pred = draw_annotation_bev(pred_result)
+            divider = np.ones((bev_img_gt.shape[0], 7, 3), dtype=np.uint8) * 128
+            bev_img = np.concatenate([bev_img_gt, divider, bev_img_pred], axis=1)[..., ::-1]
+
             output_path = os.path.join(out_dir, f'{info["segment_id"]}/{info["timestamp"]}/bev.jpg')
-            mmcv.imwrite(bev_img, output_path)
-
-            conn_img_gt = show_bev_results(gt_lanes, pred_lanes, gt_lclc, pred_lclc, only='gt', map_size=[-52, 52, -27, 27], scale=20)
-            conn_img_pred = show_bev_results(gt_lanes, pred_lanes, gt_lclc, pred_lclc, only='pred', map_size=[-52, 52, -27, 27], scale=20)
-            divider = np.ones((conn_img_gt.shape[0], 7, 3), dtype=np.uint8) * 128
-            conn_img = np.concatenate([conn_img_gt, divider, conn_img_pred], axis=1)
-
-            output_path = os.path.join(out_dir, f'{info["segment_id"]}/{info["timestamp"]}/conn.jpg')
-            mmcv.imwrite(conn_img, output_path)
+            mmcv.imwrite(bev_img_pred[..., ::-1], output_path)
 
     @staticmethod
     def _render_surround_img(images):

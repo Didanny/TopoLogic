@@ -12,6 +12,4 @@ export PYTHONPATH=$(pwd):$PYTHONPATH
 # ./tools/dist_test.sh 4 work_dirs/topologic_2026-01-29_11-02-46 epoch_24
 # ./tools/dist_test.sh 4 work_dirs/topologic_2026-01-29_11-02-46 epoch_20
 # ./tools/dist_test.sh 4 work_dirs/topologic_2026-01-29_11-02-46 epoch_16
-./tools/dist_test.sh 4 work_dirs/topologic_2026-01-29_11-02-46 epoch_12
-./tools/dist_test.sh 4 work_dirs/topologic_2026-01-29_11-02-46 epoch_8
-./tools/dist_test.sh 4 work_dirs/topologic_2026-01-29_11-02-46 epoch_4
+./tools/dist_test.sh 4 work_dirs/baseline_24 official --show
