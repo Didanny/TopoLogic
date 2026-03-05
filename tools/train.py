@@ -272,6 +272,9 @@ def main():
         test_cfg=cfg.get('test_cfg'))
     model.init_weights()
 
+    from projects.topologic.utils.param_counter import log_parameter_count
+    log_parameter_count(model, logger)
+
     logger.info(f'Model:\n{model}')
     datasets = [build_dataset(cfg.data.train)]
     if len(cfg.workflow) == 2:
